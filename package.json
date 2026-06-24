@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "lint": "node --check server.js src/app.js public/app.js",
+    "lint": "node --check server.js && node --check src/app.js && node --check public/app.js",
     "build": "node -e \"console.log('No build step required for vanilla frontend')\"",
     "test": "node --test"
   },
@@ -28,9 +28,9 @@
   },
   "homepage": "https://github.com/mainakgarai007/Anime.Keep#readme",
   "dependencies": {
-    "cors": "2.8.6",
-    "express": "5.2.1",
-    "helmet": "8.2.0",
-    "morgan": "1.11.0"
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.2.0",
+    "morgan": "^1.11.0"
   }
 }

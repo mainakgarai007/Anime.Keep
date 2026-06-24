@@ -3,11 +3,12 @@ const api = {
   get: (u, options = {}) => fetch(u, options).then((r) => r.json()),
   post: (u, b, headers = {}) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(b) }).then((r) => r.json()),
   patch: (u, b, headers = {}) => fetch(u, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(b) }).then((r) => r.json()),
-  del: (u) => fetch(u, { method: 'DELETE' }).then((r) => r.json())
+  del: (u, headers = {}) => fetch(u, { method: 'DELETE', headers }).then((r) => r.json())
 };
 
 const state = {
   user: JSON.parse(localStorage.getItem('ak_user') || 'null'),
+  token: localStorage.getItem('ak_token') || '',
   tracker: JSON.parse(localStorage.getItem('ak_tracker') || '[]'),
   watchlists: JSON.parse(localStorage.getItem('ak_watchlists') || '[]'),
   notifications: [],
@@ -24,15 +25,38 @@ const viewEl = $('#view');
 
 function saveOffline() {
   localStorage.setItem('ak_user', JSON.stringify(state.user));
+  localStorage.setItem('ak_token', state.token || '');
   localStorage.setItem('ak_tracker', JSON.stringify(state.tracker));
   localStorage.setItem('ak_watchlists', JSON.stringify(state.watchlists));
 }
 
-function toast(msg) { alert(msg); }
-function authHeader() { return state.user ? { 'x-user-id': state.user.id } : {}; }
+function esc(v = '') {
+  return String(v)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function toast(msg) {
+  const node = document.createElement('div');
+  node.className = 'card';
+  node.style.position = 'fixed';
+  node.style.right = '12px';
+  node.style.bottom = '12px';
+  node.style.zIndex = '100';
+  node.textContent = msg;
+  document.body.appendChild(node);
+  setTimeout(() => node.remove(), 2200);
+}
+
+function authHeader() {
+  return state.token ? { Authorization: 'Bearer ' + state.token } : {};
+}
 
 function animeCard(a) {
-  return `<div class="anime"><img src="${a.poster || ''}" alt="${a.title}"><div><h3>${a.title}</h3><div class="meta">⭐ ${a.score ?? 'N/A'} • ${a.episodes ?? '?'} eps • ${a.status || 'Unknown'}</div><div class="meta">${(a.genres || []).slice(0,3).join(', ')}</div><div class="actions"><button class="btn" data-add-tracker='${JSON.stringify({ animeId: a.id, title: a.title, poster: a.poster }).replaceAll("'", '&apos;')}'>+ Tracker</button><button class="btn" data-add-watch='${JSON.stringify({ animeId: a.id, title: a.title, poster: a.poster }).replaceAll("'", '&apos;')}'>+ Watchlist</button><button class="btn" data-open='${a.id}'>Details</button></div></div></div>`;
+  return `<div class="anime"><img src="${esc(a.poster || '')}" alt="${esc(a.title)}"><div><h3>${esc(a.title)}</h3><div class="meta">⭐ ${esc(a.score ?? 'N/A')} • ${esc(a.episodes ?? '?')} eps • ${esc(a.status || 'Unknown')}</div><div class="meta">${esc((a.genres || []).slice(0, 3).join(', '))}</div><div class="actions"><button class="btn" data-add-tracker='${JSON.stringify({ animeId: a.id, title: a.title, poster: a.poster }).replaceAll("'", '&apos;')}'>+ Tracker</button><button class="btn" data-add-watch='${JSON.stringify({ animeId: a.id, title: a.title, poster: a.poster }).replaceAll("'", '&apos;')}'>+ Watchlist</button><button class="btn" data-open='${a.id}'>Details</button></div></div></div>`;
 }
 
 function bindAnimeActions() {
@@ -72,7 +96,7 @@ async function loadNotifications() {
 async function addTracker(item) {
   try {
     await ensureUser();
-    const out = await api.post(`/api/users/${state.user.id}/tracker`, { ...item, status: 'watching', progress: 1, rating: 0, notes: '' });
+    const out = await api.post(`/api/users/${state.user.id}/tracker`, { ...item, status: 'watching', progress: 1, rating: 0, notes: '' }, authHeader());
     if (out.error) return toast(out.error);
     await loadTracker();
     render();
@@ -83,13 +107,13 @@ async function addToFirstWatchlist(item) {
   try {
     await ensureUser();
     if (!state.watchlists.length) {
-      const created = await api.post(`/api/users/${state.user.id}/watchlists`, { name: 'My First Watchlist' });
+      const created = await api.post(`/api/users/${state.user.id}/watchlists`, { name: 'My First Watchlist' }, authHeader());
       if (created.error) return toast(created.error);
       state.watchlists.push(created.watchlist);
     }
     const first = state.watchlists[0];
     const items = [...first.items.filter((i) => i.animeId !== item.animeId), item];
-    await api.patch(`/api/users/${state.user.id}/watchlists/${first.id}`, { items });
+    await api.patch(`/api/users/${state.user.id}/watchlists/${first.id}`, { items }, authHeader());
     await loadWatchlists();
     render();
   } catch (e) { toast(e.message); }
@@ -126,6 +150,7 @@ async function authAction(type) {
     const out = await api.post('/api/auth/guest', {});
     if (out.error) return toast(out.error);
     state.user = out.user;
+    state.token = out.token;
   } else if (type === 'register') {
     const payload = {
       username: $('#username').value,
@@ -136,10 +161,12 @@ async function authAction(type) {
     const out = await api.post('/api/auth/register', payload);
     if (out.error) return toast(out.error);
     state.user = out.user;
+    state.token = out.token;
   } else {
     const out = await api.post('/api/auth/login', { email: $('#email').value, password: $('#password').value });
     if (out.error) return toast(out.error);
     state.user = out.user;
+    state.token = out.token;
   }
   saveOffline();
   await Promise.all([loadTracker(), loadWatchlists(), loadNotifications()]);
@@ -174,7 +201,7 @@ function renderSearch() {
 function renderDetails() {
   const d = state.animeDetails;
   if (!d) return '<div class="card">Open anime details from Home/Search.</div>';
-  return `<div class="grid"><div class="card"><h2>${d.anime.title}</h2><img src="${d.anime.banner || d.anime.poster}" style="width:100%;max-height:320px;object-fit:cover;border-radius:12px"><p>${d.anime.synopsis || ''}</p><div class="meta">Genres: ${(d.anime.genres || []).join(', ')} | Studios: ${(d.anime.studios || []).join(', ')}</div><div class="meta">Score ${d.anime.score ?? 'N/A'} | Popularity ${d.anime.popularity ?? 'N/A'} | Aired ${d.anime.aired || 'N/A'}</div><div class="actions" style="margin-top:8px"><button class="btn" data-add-tracker='${JSON.stringify({ animeId: d.anime.id, title: d.anime.title, poster: d.anime.poster }).replaceAll("'", '&apos;')}'>+ Tracker</button><button class="btn" data-add-watch='${JSON.stringify({ animeId: d.anime.id, title: d.anime.title, poster: d.anime.poster }).replaceAll("'", '&apos;')}'>+ Watchlist</button>${d.anime.trailer ? `<a class="btn" href="${d.anime.trailer}" target="_blank">Trailer</a>` : ''}</div></div><div class="card"><h3>Characters & Voice Actors</h3><div class="list">${d.characters.map((c) => `<div class="anime"><img src="${c.image || ''}"><div><b>${c.name}</b><div class="meta">${c.role}</div><div class="meta">${(c.voiceActors || []).map((v) => `${v.name} (${v.language})`).join(', ')}</div></div></div>`).join('')}</div><h3>Recommendations</h3><div class="list">${d.recommendations.map((r) => `<div class="anime"><img src="${r.poster || ''}"><div><b>${r.title}</b><div class="meta">Votes: ${r.votes}</div><button class="btn" data-open="${r.id}">Open</button></div></div>`).join('')}</div></div></div>`;
+  return `<div class="grid"><div class="card"><h2>${esc(d.anime.title)}</h2><img src="${esc(d.anime.banner || d.anime.poster)}" style="width:100%;max-height:320px;object-fit:cover;border-radius:12px"><p>${esc(d.anime.synopsis || '')}</p><div class="meta">Genres: ${esc((d.anime.genres || []).join(', '))} | Studios: ${esc((d.anime.studios || []).join(', '))}</div><div class="meta">Score ${esc(d.anime.score ?? 'N/A')} | Popularity ${esc(d.anime.popularity ?? 'N/A')} | Aired ${esc(d.anime.aired || 'N/A')}</div><div class="actions" style="margin-top:8px"><button class="btn" data-add-tracker='${JSON.stringify({ animeId: d.anime.id, title: d.anime.title, poster: d.anime.poster }).replaceAll("'", '&apos;')}'>+ Tracker</button><button class="btn" data-add-watch='${JSON.stringify({ animeId: d.anime.id, title: d.anime.title, poster: d.anime.poster }).replaceAll("'", '&apos;')}'>+ Watchlist</button>${d.anime.trailer ? `<a class="btn" href="${esc(d.anime.trailer)}" target="_blank">Trailer</a>` : ''}</div></div><div class="card"><h3>Characters & Voice Actors</h3><div class="list">${d.characters.map((c) => `<div class="anime"><img src="${esc(c.image || '')}"><div><b>${esc(c.name)}</b><div class="meta">${esc(c.role)}</div><div class="meta">${esc((c.voiceActors || []).map((v) => `${v.name} (${v.language})`).join(', '))}</div></div></div>`).join('')}</div><h3>Recommendations</h3><div class="list">${d.recommendations.map((r) => `<div class="anime"><img src="${esc(r.poster || '')}"><div><b>${esc(r.title)}</b><div class="meta">Votes: ${esc(r.votes)}</div><button class="btn" data-open="${r.id}">Open</button></div></div>`).join('')}</div></div></div>`;
 }
 
 function renderSchedule() {
@@ -211,7 +238,7 @@ async function renderCommunityPosts() {
   const posts = data.posts || [];
   const postsEl = $('#posts');
   if (!postsEl) return;
-  postsEl.innerHTML = posts.map((p) => `<div class="card"><b>${p.username}</b> ${p.spoiler ? '<span class="badge">Spoiler</span>' : ''}<p>${p.content}</p><div class="actions"><button class="btn" data-like="${p.id}">Like (${p.likes.length})</button><input placeholder="Reply..." data-comment-input="${p.id}"><button class="btn" data-comment="${p.id}">Reply</button></div><div class="meta">${p.comments.map((c) => `${c.username}: ${c.content}`).join('<br>')}</div></div>`).join('');
+  postsEl.innerHTML = posts.map((p) => `<div class="card"><b>${esc(p.username)}</b> ${p.spoiler ? '<span class="badge">Spoiler</span>' : ''}<p>${esc(p.content)}</p><div class="actions"><button class="btn" data-like="${p.id}">Like (${p.likes.length})</button><input placeholder="Reply..." data-comment-input="${p.id}"><button class="btn" data-comment="${p.id}">Reply</button></div><div class="meta">${p.comments.map((c) => `${esc(c.username)}: ${esc(c.content)}`).join('<br>')}</div></div>`).join('');
   document.querySelectorAll('[data-like]').forEach((b) => b.onclick = async () => { if (!state.user) return toast('Login required'); await api.post(`/api/community/posts/${b.dataset.like}/like`, {}, authHeader()); await renderCommunityPosts(); });
   document.querySelectorAll('[data-comment]').forEach((b) => b.onclick = async () => { if (!state.user) return toast('Login required'); const input = document.querySelector(`[data-comment-input="${b.dataset.comment}"]`); await api.post(`/api/community/posts/${b.dataset.comment}/comments`, { content: input.value }, authHeader()); input.value = ''; await renderCommunityPosts(); });
 }
@@ -246,7 +273,7 @@ async function render() {
   if ($('#registerBtn')) $('#registerBtn').onclick = () => authAction('register');
   if ($('#loginBtn')) $('#loginBtn').onclick = () => authAction('login');
   if ($('#guestBtn')) $('#guestBtn').onclick = () => authAction('guest');
-  if ($('#logoutBtn')) $('#logoutBtn').onclick = () => { state.user = null; saveOffline(); render(); };
+  if ($('#logoutBtn')) $('#logoutBtn').onclick = () => { state.user = null; state.token = ''; saveOffline(); render(); };
   if ($('#searchBtn')) $('#searchBtn').onclick = () => performSearch();
   if ($('#searchInput')) $('#searchInput').oninput = (e) => e.target.value.length > 1 && performSearch(e.target.value);
   if ($('#loadScheduleBtn')) $('#loadScheduleBtn').onclick = async () => { await loadSchedule($('#scheduleFilter').value, $('#languageFilter').value); render(); };
@@ -255,13 +282,13 @@ async function render() {
     const id = b.dataset.saveEntry;
     const progress = document.querySelector(`[data-progress="${id}"]`).value;
     const status = document.querySelector(`[data-status="${id}"]`).value;
-    await api.patch(`/api/users/${state.user.id}/tracker/${id}`, { progress: Number(progress), status });
+    await api.patch(`/api/users/${state.user.id}/tracker/${id}`, { progress: Number(progress), status }, authHeader());
     await loadTracker();
     render();
   });
 
   document.querySelectorAll('[data-del-entry]').forEach((b) => b.onclick = async () => {
-    await api.del(`/api/users/${state.user.id}/tracker/${b.dataset.delEntry}`);
+    await api.del(`/api/users/${state.user.id}/tracker/${b.dataset.delEntry}`, authHeader());
     await loadTracker();
     render();
   });
@@ -270,7 +297,7 @@ async function render() {
     if (!state.user) return toast('Login first');
     const name = $('#watchlistName').value.trim();
     if (!name) return toast('Enter watchlist name');
-    const out = await api.post(`/api/users/${state.user.id}/watchlists`, { name });
+    const out = await api.post(`/api/users/${state.user.id}/watchlists`, { name }, authHeader());
     if (out.error) return toast(out.error);
     await loadWatchlists();
     render();
@@ -279,7 +306,7 @@ async function render() {
   document.querySelectorAll('[data-rename-watch]').forEach((b) => b.onclick = async () => {
     const name = prompt('New watchlist name:');
     if (!name) return;
-    await api.patch(`/api/users/${state.user.id}/watchlists/${b.dataset.renameWatch}`, { name });
+    await api.patch(`/api/users/${state.user.id}/watchlists/${b.dataset.renameWatch}`, { name }, authHeader());
     await loadWatchlists();
     render();
   });
@@ -292,7 +319,7 @@ async function render() {
   });
 
   document.querySelectorAll('[data-del-watch]').forEach((b) => b.onclick = async () => {
-    await api.del(`/api/users/${state.user.id}/watchlists/${b.dataset.delWatch}`);
+    await api.del(`/api/users/${state.user.id}/watchlists/${b.dataset.delWatch}`, authHeader());
     await loadWatchlists();
     render();
   });
@@ -308,7 +335,7 @@ async function render() {
 
   if ($('#profileCard') && state.user) {
     const data = await api.get(`/api/users/${state.user.id}/profile`);
-    $('#profileCard').innerHTML = `<h2>${data.user.username}</h2><div class="meta">${data.user.email}</div><p>${data.user.bio || 'No bio yet.'}</p><div class="grid"><div class="card">Anime Count: ${data.stats.animeCount}</div><div class="card">Watching: ${data.stats.watchingCount}</div><div class="card">Completed: ${data.stats.completedCount}</div><div class="card">Completion Rate: ${data.stats.completionRate}%</div><div class="card">Watch Time: ${data.stats.watchTime} mins</div><div class="card">Badges: ${(data.user.achievements || []).join(', ') || 'None'}</div></div>`;
+    $('#profileCard').innerHTML = `<h2>${esc(data.user.username)}</h2><div class="meta">${esc(data.user.email)}</div><p>${esc(data.user.bio || 'No bio yet.')}</p><div class="grid"><div class="card">Anime Count: ${esc(data.stats.animeCount)}</div><div class="card">Watching: ${esc(data.stats.watchingCount)}</div><div class="card">Completed: ${esc(data.stats.completedCount)}</div><div class="card">Completion Rate: ${esc(data.stats.completionRate)}%</div><div class="card">Watch Time: ${esc(data.stats.watchTime)} mins</div><div class="card">Badges: ${esc((data.user.achievements || []).join(', ') || 'None')}</div></div>`;
   }
 
   if ($('#saveSettingsBtn')) $('#saveSettingsBtn').onclick = async () => {
@@ -319,7 +346,7 @@ async function render() {
       privacy: $('#privacySetting').value,
       notifications: $('#notifySetting').checked
     };
-    const out = await api.patch(`/api/users/${state.user.id}/settings`, payload);
+    const out = await api.patch(`/api/users/${state.user.id}/settings`, payload, authHeader());
     if (out.error) return toast(out.error);
     toast('Settings saved');
   };
