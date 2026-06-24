@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ANIME.KEEP</title>
+  <style>
+    :root{
+      --bg:#06080f;--bg-soft:#101426;--glass:rgba(20,28,52,.55);--line:rgba(112,147,255,.3);
+      --blue:#3a8dff;--purple:#9c58ff;--txt:#e8eeff;--muted:#9dafd7;--ok:#32d583;--warn:#ffb547;
+      --radius:16px;--gap:14px;--glow:0 0 24px rgba(58,141,255,.35);
+    }
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top,#11193a,var(--bg));color:var(--txt);font-family:Inter,system-ui,sans-serif}
+    .app{max-width:1200px;margin:auto;padding:12px}
+    .nav,.card,.chip,.btn,input,select,textarea{border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(12px);border-radius:var(--radius);color:var(--txt)}
+    .nav{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;padding:10px;position:sticky;top:8px;z-index:10;box-shadow:var(--glow)}
+    .logo{font-weight:800;letter-spacing:.08em}
+    .btn{padding:8px 12px;cursor:pointer} .btn:hover{box-shadow:var(--glow)}
+    input,select,textarea{width:100%;padding:10px} textarea{min-height:80px}
+    .tabs{display:flex;overflow:auto;gap:8px;margin:12px 0}.chip{padding:8px 12px;white-space:nowrap;cursor:pointer}.chip.active{background:linear-gradient(90deg,var(--blue),var(--purple))}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap)}
+    .card{padding:12px}
+    .hero{padding:16px;border-radius:22px;background:linear-gradient(135deg,rgba(58,141,255,.35),rgba(156,88,255,.3));box-shadow:var(--glow);margin:12px 0}
+    h1,h2,h3{margin:.2em 0}.meta{color:var(--muted);font-size:.9rem}.anime{display:grid;grid-template-columns:72px 1fr;gap:10px;padding:10px;border-radius:12px;background:rgba(8,12,24,.7);margin:8px 0}
+    .anime img{width:72px;height:96px;object-fit:cover;border-radius:10px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}.hidden{display:none}.list{max-height:480px;overflow:auto;padding-right:4px}
+    .badge{font-size:.75rem;padding:2px 8px;border-radius:999px;background:rgba(50,213,131,.2);border:1px solid rgba(50,213,131,.45)}
+    .footer{color:var(--muted);text-align:center;padding:20px 0}
+    @media (max-width:720px){.nav{grid-template-columns:1fr auto auto}.logo{grid-column:1/-1}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="nav">
+    <div class="logo">ANIME.KEEP</div>
+    <input id="globalSearch" placeholder="Search anime..." />
+    <button class="btn" id="notifyBtn">Notifications</button>
+    <button class="btn" id="profileBtn">Profile</button>
+  </div>
+
+  <div class="hero">
+    <h1>Track • Organize • Discover • Watch • Connect</h1>
+    <div class="meta">MG STYLE • Dark AMOLED • Neon Glassmorphism • Mobile First</div>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <section id="view"></section>
+  <div class="footer">ANIME.KEEP ecosystem (dynamic Jikan data + persistent user platform)</div>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
