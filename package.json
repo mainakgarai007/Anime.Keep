@@ -1,0 +1,36 @@
+{
+  "name": "anime.keep",
+  "version": "1.0.0",
+  "description": "ANIME.KEEP - Track • Organize • Discover • Watch • Connect",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "lint": "node --check server.js src/app.js public/app.js",
+    "build": "node -e \"console.log('No build step required for vanilla frontend')\"",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mainakgarai007/Anime.Keep.git"
+  },
+  "keywords": [
+    "anime",
+    "tracker",
+    "jikan",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mainakgarai007/Anime.Keep/issues"
+  },
+  "homepage": "https://github.com/mainakgarai007/Anime.Keep#readme",
+  "dependencies": {
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "helmet": "8.2.0",
+    "morgan": "1.11.0"
+  }
+}
