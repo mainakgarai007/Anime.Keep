@@ -75,21 +75,21 @@ async function loadHome() {
 
 async function loadTracker() {
   if (!state.user) return;
-  const data = await api.get(`/api/users/${state.user.id}/tracker`);
+  const data = await api.get(`/api/users/${state.user.id}/tracker`, { headers: authHeader() });
   state.tracker = data.entries || [];
   saveOffline();
 }
 
 async function loadWatchlists() {
   if (!state.user) return;
-  const data = await api.get(`/api/users/${state.user.id}/watchlists`);
+  const data = await api.get(`/api/users/${state.user.id}/watchlists`, { headers: authHeader() });
   state.watchlists = data.watchlists || [];
   saveOffline();
 }
 
 async function loadNotifications() {
   if (!state.user) return;
-  const data = await api.get(`/api/users/${state.user.id}/notifications`);
+  const data = await api.get(`/api/users/${state.user.id}/notifications`, { headers: authHeader() });
   state.notifications = data.notifications || [];
 }
 
@@ -133,7 +133,7 @@ async function performSearch(query = '') {
   const rating = $('#ratingFilter')?.value || '';
   const year = $('#yearFilter')?.value || '';
   const season = $('#seasonFilter')?.value || '';
-  const params = new URLSearchParams({ q: query || $('#searchInput')?.value || '' , genre, status, rating, year, season });
+  const params = new URLSearchParams({ q: query || $('#searchInput')?.value || '', genre, status, rating, year, season });
   const data = await api.get(`/api/anime/search?${params.toString()}`);
   state.searchResults = data.results || [];
   render();
@@ -334,7 +334,7 @@ async function render() {
   };
 
   if ($('#profileCard') && state.user) {
-    const data = await api.get(`/api/users/${state.user.id}/profile`);
+    const data = await api.get(`/api/users/${state.user.id}/profile`, { headers: authHeader() });
     $('#profileCard').innerHTML = `<h2>${esc(data.user.username)}</h2><div class="meta">${esc(data.user.email)}</div><p>${esc(data.user.bio || 'No bio yet.')}</p><div class="grid"><div class="card">Anime Count: ${esc(data.stats.animeCount)}</div><div class="card">Watching: ${esc(data.stats.watchingCount)}</div><div class="card">Completed: ${esc(data.stats.completedCount)}</div><div class="card">Completion Rate: ${esc(data.stats.completionRate)}%</div><div class="card">Watch Time: ${esc(data.stats.watchTime)} mins</div><div class="card">Badges: ${esc((data.user.achievements || []).join(', ') || 'None')}</div></div>`;
   }
 
@@ -363,12 +363,16 @@ async function render() {
   if ($('#importInput')) $('#importInput').onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const data = JSON.parse(await file.text());
-    if (data.user) state.user = data.user;
-    if (data.tracker) state.tracker = data.tracker;
-    if (data.watchlists) state.watchlists = data.watchlists;
-    saveOffline();
-    render();
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.user && typeof data.user === 'object') state.user = data.user;
+      if (Array.isArray(data.tracker)) state.tracker = data.tracker;
+      if (Array.isArray(data.watchlists)) state.watchlists = data.watchlists;
+      saveOffline();
+      render();
+    } catch {
+      toast('Invalid import file');
+    }
   };
 
   if ($('#loadAdminBtn')) $('#loadAdminBtn').onclick = async () => {

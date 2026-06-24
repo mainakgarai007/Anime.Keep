@@ -2,6 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -13,6 +14,7 @@ const rootDir = path.resolve(__dirname, '..');
 const dbPath = path.join(rootDir, 'data', 'db.json');
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const cache = new Map();
+const MAX_CACHE_ITEMS = 300;
 const MINUTES_PER_EPISODE = 24;
 const MIN_HIDDEN_GEM_SCORE = 8;
 const MAX_HIDDEN_GEM_MEMBERS = 200000;
@@ -20,7 +22,7 @@ const SEASONS = new Set(['winter', 'spring', 'summer', 'fall']);
 const requestWindowMs = 60 * 1000;
 const defaultRateLimitMax = 120;
 const strictRateLimitMax = 20;
-const rateBuckets = new Map();
+const adminEmails = new Set(String(process.env.ADMIN_EMAILS || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean));
 
 const defaultDb = {
   users: [],
@@ -42,8 +44,11 @@ const safe = async (promise, fallback) => {
 
 async function ensureDb() {
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
-  const exists = await safe(fs.access(dbPath), null);
-  if (!exists) await fs.writeFile(dbPath, JSON.stringify(defaultDb, null, 2));
+  try {
+    await fs.access(dbPath);
+  } catch {
+    await fs.writeFile(dbPath, JSON.stringify(defaultDb, null, 2));
+  }
 }
 
 async function readDb() {
@@ -83,8 +88,12 @@ async function cachedFetchJson(url, ttlMs = 1000 * 60 * 10) {
   if (hit && hit.expiresAt > now) return hit.value;
 
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Jikan error ${response.status}`);
+  if (!response.ok) throw new Error(`Jikan error ${response.status} for ${url}`);
   const value = await response.json();
+  if (cache.size >= MAX_CACHE_ITEMS) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey) cache.delete(firstKey);
+  }
   cache.set(key, { value, expiresAt: now + ttlMs });
   return value;
 }
@@ -129,28 +138,24 @@ function authUser(req, db) {
   return session ? getUser(db, session.userId) : null;
 }
 
-function buildRateLimiter(maxRequests = defaultRateLimitMax) {
-  return (req, res, next) => {
-    const key = `${req.ip}:${req.path}:${req.method}`;
-    const now = Date.now();
-    const bucket = rateBuckets.get(key) || { count: 0, resetAt: now + requestWindowMs };
-    if (now > bucket.resetAt) {
-      bucket.count = 0;
-      bucket.resetAt = now + requestWindowMs;
-    }
-
-    bucket.count += 1;
-    rateBuckets.set(key, bucket);
-    if (bucket.count > maxRequests) return res.status(429).json({ error: 'Too many requests. Please retry later.' });
-    next();
-  };
-}
+const buildRateLimiter = (max) => rateLimit({
+  windowMs: requestWindowMs,
+  limit: max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please retry later.' }
+});
 
 async function requireAuth(req, res, next) {
   const db = await readDb();
   const user = authUser(req, db);
   if (!user) return res.status(401).json({ error: 'Login required' });
   req.auth = { user, db };
+  next();
+}
+
+function requireOwnership(req, res, next) {
+  if (String(req.params.id) !== String(req.auth.user.id)) return res.status(403).json({ error: 'Forbidden' });
   next();
 }
 
@@ -161,14 +166,14 @@ export function createApp() {
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
   app.use(morgan('dev'));
-  app.use('/api', buildRateLimiter());
+  app.use(buildRateLimiter());
 
   app.get('/api/health', async (_req, res) => {
     const db = await readDb();
     res.json({ ok: true, users: db.users.length, uptime: process.uptime() });
   });
 
-  app.post('/api/auth/register', async (req, res) => {
+  app.post('/api/auth/register', buildRateLimiter(strictRateLimitMax), async (req, res) => {
     const { username, email, password, avatar } = req.body || {};
     if (!username || !email || !password) return res.status(400).json({ error: 'Username, email, password are required.' });
     const db = await readDb();
@@ -182,6 +187,7 @@ export function createApp() {
       avatar: avatar || '',
       bio: '',
       role: email.endsWith('@admin.keep') ? 'admin' : 'user',
+      role: adminEmails.has(email.toLowerCase()) ? 'admin' : 'user',
       favoriteAnime: [],
       achievements: [],
       settings: { theme: 'amoled', language: 'en', notifications: true, privacy: 'public' },
@@ -193,7 +199,7 @@ export function createApp() {
     res.json({ user: { ...user, password: undefined }, token });
   });
 
-  app.post('/api/auth/login', async (req, res) => {
+  app.post('/api/auth/login', buildRateLimiter(strictRateLimitMax), async (req, res) => {
     const { email, password } = req.body || {};
     const db = await readDb();
     const user = db.users.find((u) => u.email.toLowerCase() === String(email || '').toLowerCase());
@@ -203,7 +209,7 @@ export function createApp() {
     res.json({ user: { ...user, password: undefined }, token });
   });
 
-  app.post('/api/auth/guest', async (_req, res) => {
+  app.post('/api/auth/guest', buildRateLimiter(strictRateLimitMax), async (_req, res) => {
     const db = await readDb();
     const id = db.counters.user++;
     const user = {
@@ -225,7 +231,7 @@ export function createApp() {
     res.json({ user: { ...user, password: undefined }, token });
   });
 
-  app.get('/api/users/:id/profile', async (req, res) => {
+  app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
     const db = await readDb();
     const user = getUser(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -233,8 +239,11 @@ export function createApp() {
     const completed = entries.filter((e) => e.status === 'completed').length;
     const watching = entries.filter((e) => e.status === 'watching').length;
     const watchTime = entries.reduce((sum, e) => sum + Number(e.progress || 0) * MINUTES_PER_EPISODE, 0);
+    const isOwner = String(req.auth.user.id) === String(user.id);
     res.json({
-      user: { ...user, password: undefined },
+      user: isOwner
+        ? { ...user, password: undefined }
+        : { id: user.id, username: user.username, avatar: user.avatar, bio: user.bio, achievements: user.achievements },
       stats: {
         animeCount: entries.length,
         watchingCount: watching,
@@ -245,11 +254,16 @@ export function createApp() {
     });
   });
 
-  app.patch('/api/users/:id/settings', async (req, res) => {
+  app.patch('/api/users/:id/settings', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const user = getUser(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    user.settings = { ...user.settings, ...(req.body || {}) };
+    const allowedSettings = ['theme', 'language', 'notifications', 'privacy'];
+    const nextSettings = {};
+    for (const key of allowedSettings) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) nextSettings[key] = req.body[key];
+    }
+    user.settings = { ...user.settings, ...nextSettings };
     await writeDb(db);
     res.json({ settings: user.settings });
   });
@@ -339,12 +353,12 @@ export function createApp() {
     res.json({ filter, language, results: (data.data || []).map(normalizeAnime) });
   });
 
-  app.get('/api/users/:id/tracker', async (req, res) => {
+  app.get('/api/users/:id/tracker', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     res.json({ entries: db.trackerEntries.filter((t) => String(t.userId) === String(req.params.id)) });
   });
 
-  app.post('/api/users/:id/tracker', async (req, res) => {
+  app.post('/api/users/:id/tracker', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const user = getUser(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -358,16 +372,20 @@ export function createApp() {
     res.status(201).json({ entry });
   });
 
-  app.patch('/api/users/:id/tracker/:entryId', async (req, res) => {
+  app.patch('/api/users/:id/tracker/:entryId', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const entry = db.trackerEntries.find((e) => String(e.id) === String(req.params.entryId) && String(e.userId) === String(req.params.id));
     if (!entry) return res.status(404).json({ error: 'Entry not found' });
-    Object.assign(entry, req.body || {}, { updatedAt: new Date().toISOString() });
+    const allowedFields = ['status', 'progress', 'rating', 'notes'];
+    for (const key of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) entry[key] = req.body[key];
+    }
+    entry.updatedAt = new Date().toISOString();
     await writeDb(db);
     res.json({ entry });
   });
 
-  app.delete('/api/users/:id/tracker/:entryId', async (req, res) => {
+  app.delete('/api/users/:id/tracker/:entryId', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const before = db.trackerEntries.length;
     db.trackerEntries = db.trackerEntries.filter((e) => !(String(e.id) === String(req.params.entryId) && String(e.userId) === String(req.params.id)));
@@ -376,12 +394,12 @@ export function createApp() {
     res.json({ success: true });
   });
 
-  app.get('/api/users/:id/watchlists', async (req, res) => {
+  app.get('/api/users/:id/watchlists', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     res.json({ watchlists: db.watchlists.filter((w) => String(w.userId) === String(req.params.id)) });
   });
 
-  app.post('/api/users/:id/watchlists', async (req, res) => {
+  app.post('/api/users/:id/watchlists', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const user = getUser(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -393,7 +411,7 @@ export function createApp() {
     res.status(201).json({ watchlist });
   });
 
-  app.patch('/api/users/:id/watchlists/:watchlistId', async (req, res) => {
+  app.patch('/api/users/:id/watchlists/:watchlistId', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const watchlist = db.watchlists.find((w) => String(w.id) === String(req.params.watchlistId) && String(w.userId) === String(req.params.id));
     if (!watchlist) return res.status(404).json({ error: 'Watchlist not found' });
@@ -403,7 +421,7 @@ export function createApp() {
     res.json({ watchlist });
   });
 
-  app.delete('/api/users/:id/watchlists/:watchlistId', async (req, res) => {
+  app.delete('/api/users/:id/watchlists/:watchlistId', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const before = db.watchlists.length;
     db.watchlists = db.watchlists.filter((w) => !(String(w.id) === String(req.params.watchlistId) && String(w.userId) === String(req.params.id)));
@@ -412,12 +430,12 @@ export function createApp() {
     res.json({ success: true });
   });
 
-  app.get('/api/users/:id/notifications', async (req, res) => {
+  app.get('/api/users/:id/notifications', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     res.json({ notifications: db.notifications.filter((n) => String(n.userId) === String(req.params.id)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
   });
 
-  app.post('/api/users/:id/notifications', async (req, res) => {
+  app.post('/api/users/:id/notifications', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const user = getUser(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -429,7 +447,7 @@ export function createApp() {
     res.status(201).json({ notification });
   });
 
-  app.patch('/api/users/:id/notifications/:notificationId/read', async (req, res) => {
+  app.patch('/api/users/:id/notifications/:notificationId/read', buildRateLimiter(strictRateLimitMax), requireAuth, requireOwnership, async (req, res) => {
     const db = await readDb();
     const target = db.notifications.find((n) => String(n.id) === String(req.params.notificationId) && String(n.userId) === String(req.params.id));
     if (!target) return res.status(404).json({ error: 'Notification not found' });
